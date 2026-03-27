@@ -1,0 +1,7 @@
+id: no-any-cast
+language: typescript
+severity: warning
+description: "Avoid casting to 'any' type"
+pipeline:
+  - ast-grep:
+      pattern: "$EXPR as any"

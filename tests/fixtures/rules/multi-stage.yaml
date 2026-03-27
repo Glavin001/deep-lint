@@ -1,0 +1,14 @@
+id: ensure-error-handling
+language: typescript
+severity: warning
+description: "Async functions should have error handling"
+pipeline:
+  - ast-grep:
+      pattern: "async function $FUNC($$$PARAMS) { $$$BODY }"
+  - llm:
+      prompt: |
+        Does this async function have proper error handling (try/catch, .catch(), or error callback)?
+        Function: $FUNC
+        Code:
+        $MATCHED_CODE
+      confidence_threshold: 0.7
