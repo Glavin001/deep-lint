@@ -1,5 +1,6 @@
 import type { Candidate } from "./candidate.js";
 import type { Stage, StageContext } from "./stage.js";
+import { isCacheableStage } from "./stage.js";
 import type { Language, Severity, FileContext } from "../types.js";
 
 export interface PipelineConfig {
@@ -21,6 +22,8 @@ export interface StageTraceEntry {
   candidatesIn: number;
   candidatesOut: number;
   durationMs: number;
+  cacheHits?: number;
+  cacheMisses?: number;
 }
 
 export interface PipelineResult {
@@ -60,16 +63,76 @@ export async function executePipeline(
     if (activeCount === 0) break;
 
     const stageStart = performance.now();
-    candidates = await stage.process(candidates, ctx);
+    let cacheHits = 0;
+    let cacheMisses = 0;
+
+    const cacheable = ctx.cacheStore && isCacheableStage(stage);
+
+    if (cacheable) {
+      // Process candidates individually: check cache per candidate
+      const cacheableStage = stage;
+      const processed: Candidate[] = [];
+      const uncached: Candidate[] = [];
+
+      for (const candidate of candidates) {
+        if (candidate.filtered) {
+          processed.push(candidate);
+          continue;
+        }
+
+        const cacheKey = cacheableStage.computeCacheKey(candidate);
+        const cached = await ctx.cacheStore!.get(cacheKey);
+
+        if (cached) {
+          cacheHits++;
+          processed.push({
+            ...candidate,
+            annotations: { ...candidate.annotations, ...cached.annotations },
+            filtered: cached.filtered,
+          });
+        } else {
+          uncached.push(candidate);
+        }
+      }
+
+      // Process uncached candidates through the stage
+      if (uncached.length > 0) {
+        cacheMisses += uncached.length;
+        const results = await stage.process(uncached, ctx);
+
+        for (const result of results) {
+          // Cache the result
+          const cacheKey = cacheableStage.computeCacheKey(result);
+          await ctx.cacheStore!.set(cacheKey, {
+            annotations: result.annotations,
+            filtered: result.filtered,
+            cachedAt: Date.now(),
+          });
+          processed.push(result);
+        }
+      }
+
+      candidates = processed;
+    } else {
+      candidates = await stage.process(candidates, ctx);
+    }
+
     const stageEnd = performance.now();
 
     const activeAfter = candidates.filter((c) => !c.filtered).length;
-    stageTraces.push({
+    const traceEntry: StageTraceEntry = {
       name: stage.name,
       candidatesIn: activeCount,
       candidatesOut: activeAfter,
       durationMs: stageEnd - stageStart,
-    });
+    };
+
+    if (cacheable) {
+      traceEntry.cacheHits = cacheHits;
+      traceEntry.cacheMisses = cacheMisses;
+    }
+
+    stageTraces.push(traceEntry);
   }
 
   const pipelineEnd = performance.now();

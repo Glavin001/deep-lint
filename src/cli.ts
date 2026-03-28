@@ -1,5 +1,7 @@
+import { resolve } from "node:path";
 import { Command } from "commander";
 import { scan } from "./cli/scan.js";
+import { FsCacheStore } from "./cache/fs-cache-store.js";
 import type { FormatterType } from "./cli/formatters/index.js";
 
 const program = new Command();
@@ -19,15 +21,34 @@ program
   .option("-f, --format <format>", "Output format: json | pretty", "pretty")
   .option("--no-llm", "Skip LLM stages")
   .option("--severity <level>", "Minimum severity: info | warning | error")
+  .option("--cache", "Enable caching for LLM stages")
+  .option("--cache-dir <path>", "Cache directory", ".deep-lint/cache")
+  .option("--clear-cache", "Clear the cache before running")
   .action(async (paths: string[], opts) => {
     try {
       const scanPaths = paths.length > 0 ? paths : ["."];
+
+      let cacheStore: FsCacheStore | undefined;
+      if (opts.cache || opts.clearCache) {
+        const cacheDir = resolve(opts.cacheDir);
+        cacheStore = new FsCacheStore({ cacheDir });
+
+        if (opts.clearCache) {
+          await cacheStore.clear();
+          if (!opts.cache) {
+            process.stdout.write("Cache cleared.\n");
+            return;
+          }
+        }
+      }
+
       const result = await scan({
         paths: scanPaths,
         rulesDir: opts.rules,
         format: opts.format as FormatterType,
         skipLlm: !opts.llm,
         severity: opts.severity,
+        cacheStore,
       });
 
       process.stdout.write(result.output + "\n");

@@ -7,14 +7,18 @@ import { jsonFormatter } from "./formatters/json.js";
 import { prettyFormatter } from "./formatters/pretty.js";
 import type { FormatterType } from "./formatters/index.js";
 import type { LintResult } from "../types.js";
+import type { StageContext } from "../core/stage.js";
+import type { CacheStore } from "../cache/cache-store.js";
 
 export interface ScanOptions {
   paths: string[];
   rulesDir: string;
   format: FormatterType;
   model?: LanguageModel;
+  modelId?: string;
   skipLlm?: boolean;
   severity?: string;
+  cacheStore?: CacheStore;
 }
 
 export async function scan(options: ScanOptions): Promise<{ output: string; hasErrors: boolean }> {
@@ -26,6 +30,10 @@ export async function scan(options: ScanOptions): Promise<{ output: string; hasE
   }
 
   const results: LintResult[] = [];
+  const context: StageContext = {};
+  if (options.cacheStore) {
+    context.cacheStore = options.cacheStore;
+  }
 
   for (const ruleFile of ruleFiles) {
     const rule = loadRuleFromFile(ruleFile);
@@ -40,6 +48,7 @@ export async function scan(options: ScanOptions): Promise<{ output: string; hasE
 
     const pipeline = buildPipeline(rule, {
       model: options.model,
+      modelId: options.modelId,
       skipLlm: options.skipLlm,
     });
 
@@ -50,7 +59,7 @@ export async function scan(options: ScanOptions): Promise<{ output: string; hasE
 
     if (files.length === 0) continue;
 
-    const result = await executePipeline(pipeline, files);
+    const result = await executePipeline(pipeline, files, context);
 
     const activeFindings = result.candidates.filter((c) => !c.filtered);
     if (activeFindings.length > 0) {
