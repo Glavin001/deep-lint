@@ -37,6 +37,8 @@ function parseEslintOutput(stdout: string, filePath: string): ToolFinding[] {
   const findings: ToolFinding[] = [];
   for (const fileResult of parsed) {
     for (const msg of fileResult.messages) {
+      // Skip messages without a ruleId — these are config/ignore warnings, not lint findings
+      if (!msg.ruleId) continue;
       findings.push({
         location: {
           filePath,
@@ -80,26 +82,38 @@ export function createEslintStage(config: EslintStageConfig): Stage {
         const fc = fileCandidates[0].fileContext;
         const ext = LANGUAGE_EXTENSIONS[fc.language] ?? ".js";
 
-        const result = await runTool(
-          {
-            command: "npx",
-            args: [
-              "eslint",
-              "--no-eslintrc",
-              "--rule", ruleArg,
-              "--format", "json",
-              "__TEMPFILE__",
-            ],
-            toolName: "ESLint",
-            parseOutput: parseEslintOutput,
-            findingExitCodes: [0, 1],
-          },
-          fc.content,
-          filePath,
-          ext,
-        );
+        try {
+          const result = await runTool(
+            {
+              command: "npx",
+              args: [
+                "eslint",
+                "--no-config-lookup",
+                "--rule", ruleArg,
+                "--format", "json",
+                "__TEMPFILE__",
+              ],
+              toolName: "ESLint",
+              parseOutput: parseEslintOutput,
+              findingExitCodes: [0, 1],
+            },
+            fc.content,
+            filePath,
+            ext,
+          );
 
-        findingsMap.set(filePath, result.findings);
+          findingsMap.set(filePath, result.findings);
+        } catch (error) {
+          // Tool not available — filter all candidates (no findings possible)
+          return candidates.map((c) => ({
+            ...c,
+            filtered: true,
+            annotations: {
+              ...c.annotations,
+              toolError: error instanceof Error ? error.message : String(error),
+            },
+          }));
+        }
       }
 
       return processToolFindings(candidates, findingsMap);

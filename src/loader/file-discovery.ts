@@ -12,6 +12,14 @@ const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
   ".cjs": "javascript",
   ".html": "html",
   ".css": "css",
+  ".py": "python",
+  ".go": "go",
+  ".rs": "rust",
+  ".java": "java",
+  ".c": "c",
+  ".cpp": "cpp",
+  ".cc": "cpp",
+  ".cxx": "cpp",
 };
 
 const LANGUAGE_TO_EXTENSIONS: Record<string, string[]> = {
@@ -21,6 +29,12 @@ const LANGUAGE_TO_EXTENSIONS: Record<string, string[]> = {
   jsx: ["**/*.jsx"],
   html: ["**/*.html"],
   css: ["**/*.css"],
+  python: ["**/*.py"],
+  go: ["**/*.go"],
+  rust: ["**/*.rs"],
+  java: ["**/*.java"],
+  c: ["**/*.c"],
+  cpp: ["**/*.cpp", "**/*.cc", "**/*.cxx"],
 };
 
 export function detectLanguage(filePath: string): Language | null {

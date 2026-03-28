@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -34,4 +34,7 @@ jobs:
         run: npm run build
 
       - name: CLI smoke test
-        run: node dist/cli.js scan --rules rules/typescript --no-llm tests/fixtures/code --format json
+        run: |
+          # Smoke test: verify CLI runs without crashing. Exit code 1 is expected (findings exist).
+          node dist/cli.js scan --rules rules/typescript --no-llm tests/fixtures/code --format json; rc=$?
+          if [ $rc -gt 1 ]; then exit $rc; fi

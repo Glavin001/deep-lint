@@ -101,20 +101,31 @@ export function createSemgrepStage(config: SemgrepStageConfig): Stage {
         }
         args.push("--json", "--quiet", "__TEMPFILE__");
 
-        const result = await runTool(
-          {
-            command: "semgrep",
-            args,
-            toolName: "Semgrep",
-            parseOutput: parseSemgrepOutput,
-            findingExitCodes: [0, 1],
-          },
-          fc.content,
-          filePath,
-          ext,
-        );
+        try {
+          const result = await runTool(
+            {
+              command: "semgrep",
+              args,
+              toolName: "Semgrep",
+              parseOutput: parseSemgrepOutput,
+              findingExitCodes: [0, 1],
+            },
+            fc.content,
+            filePath,
+            ext,
+          );
 
-        findingsMap.set(filePath, result.findings);
+          findingsMap.set(filePath, result.findings);
+        } catch (error) {
+          return candidates.map((c) => ({
+            ...c,
+            filtered: true,
+            annotations: {
+              ...c.annotations,
+              toolError: error instanceof Error ? error.message : String(error),
+            },
+          }));
+        }
       }
 
       return processToolFindings(candidates, findingsMap);

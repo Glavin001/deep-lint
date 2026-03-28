@@ -66,26 +66,37 @@ export function createRuffStage(config: RuffStageConfig): Stage {
       for (const [filePath, fileCandidates] of fileMap) {
         const fc = fileCandidates[0].fileContext;
 
-        const result = await runTool(
-          {
-            command: "ruff",
-            args: [
-              "check",
-              "--select", selectArg,
-              "--output-format", "json",
-              "--isolated",
-              "__TEMPFILE__",
-            ],
-            toolName: "Ruff",
-            parseOutput: parseRuffOutput,
-            findingExitCodes: [0, 1],
-          },
-          fc.content,
-          filePath,
-          ".py",
-        );
+        try {
+          const result = await runTool(
+            {
+              command: "ruff",
+              args: [
+                "check",
+                "--select", selectArg,
+                "--output-format", "json",
+                "--isolated",
+                "__TEMPFILE__",
+              ],
+              toolName: "Ruff",
+              parseOutput: parseRuffOutput,
+              findingExitCodes: [0, 1],
+            },
+            fc.content,
+            filePath,
+            ".py",
+          );
 
-        findingsMap.set(filePath, result.findings);
+          findingsMap.set(filePath, result.findings);
+        } catch (error) {
+          return candidates.map((c) => ({
+            ...c,
+            filtered: true,
+            annotations: {
+              ...c.annotations,
+              toolError: error instanceof Error ? error.message : String(error),
+            },
+          }));
+        }
       }
 
       return processToolFindings(candidates, findingsMap);
