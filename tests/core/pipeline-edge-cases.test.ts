@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { executePipeline, type PipelineConfig } from "../../src/core/pipeline.js";
-import type { Stage, StageContext } from "../../src/core/stage.js";
+import type { Stage, StageContext, CacheableStage } from "../../src/core/stage.js";
 import type { Candidate } from "../../src/core/candidate.js";
 import type { FileContext } from "../../src/types.js";
+import type { CacheStore, CacheEntry } from "../../src/cache/cache-store.js";
 
 const testFile: FileContext = {
   filePath: "test.ts",
@@ -256,5 +257,138 @@ describe("executePipeline edge cases", () => {
     expect(result.trace.stages[1].candidatesOut).toBe(1);
     // Total candidates array still has all 10
     expect(result.candidates).toHaveLength(10);
+  });
+});
+
+// Caching edge cases in pipeline execution
+
+function createMemoryCacheStore(): CacheStore & { store: Map<string, CacheEntry> } {
+  const store = new Map<string, CacheEntry>();
+  return {
+    store,
+    async get(key: string) { return store.get(key); },
+    async set(key: string, entry: CacheEntry) { store.set(key, entry); },
+    async clear() { store.clear(); },
+  };
+}
+
+function makeCacheableAnnotator(key: string, value: unknown): CacheableStage {
+  return {
+    name: "cacheable-annotator",
+    computeCacheKey(candidate: Candidate): string {
+      return `cache-${candidate.id}-${key}`;
+    },
+    async process(candidates) {
+      return candidates.map((c) => {
+        if (c.filtered) return c;
+        return {
+          ...c,
+          annotations: { ...c.annotations, [key]: value },
+        };
+      });
+    },
+  };
+}
+
+describe("pipeline caching edge cases", () => {
+  it("error in stage during cached pipeline still propagates", async () => {
+    const cache = createMemoryCacheStore();
+    const errorStage: CacheableStage = {
+      name: "error-cacheable",
+      computeCacheKey: () => "error-key",
+      async process(): Promise<Candidate[]> {
+        throw new Error("Stage exploded");
+      },
+    };
+
+    const config = makeConfig([makeProducerStage(1), errorStage]);
+    await expect(
+      executePipeline(config, [testFile], { cacheStore: cache }),
+    ).rejects.toThrow("Stage exploded");
+  });
+
+  it("cache store can be provided alongside abort signal", async () => {
+    const cache = createMemoryCacheStore();
+    const controller = new AbortController();
+    const cacheableAnnotator = makeCacheableAnnotator("tag", "value");
+
+    const config = makeConfig([makeProducerStage(2), cacheableAnnotator]);
+    const result = await executePipeline(config, [testFile], {
+      cacheStore: cache,
+      signal: controller.signal,
+    });
+
+    expect(result.candidates).toHaveLength(2);
+    expect(result.trace.stages[1].cacheMisses).toBe(2);
+    expect(cache.store.size).toBe(2);
+  });
+
+  it("caching preserves annotations from previous stages", async () => {
+    const cache = createMemoryCacheStore();
+    const plainAnnotator = makeAnnotatorStage("step1", "done");
+    const cacheableFilter: CacheableStage = {
+      name: "cacheable-filter",
+      computeCacheKey(candidate: Candidate): string {
+        return `filter-${candidate.id}`;
+      },
+      async process(candidates) {
+        return candidates.map((c) => {
+          if (c.filtered) return c;
+          return {
+            ...c,
+            annotations: { ...c.annotations, step2: "checked" },
+          };
+        });
+      },
+    };
+
+    const config = makeConfig([makeProducerStage(2), plainAnnotator, cacheableFilter]);
+
+    // First run
+    const result1 = await executePipeline(config, [testFile], { cacheStore: cache });
+    expect(result1.candidates.every((c) => c.annotations.step1 === "done")).toBe(true);
+    expect(result1.candidates.every((c) => c.annotations.step2 === "checked")).toBe(true);
+
+    // Second run - cache hit for cacheableFilter, but step1 annotation still comes from plainAnnotator
+    const result2 = await executePipeline(config, [testFile], { cacheStore: cache });
+    expect(result2.trace.stages[2].cacheHits).toBe(2);
+    // Cache restores step2 annotations merged with step1 from the earlier pipeline stage
+    expect(result2.candidates.every((c) => c.annotations.step1 === "done")).toBe(true);
+    expect(result2.candidates.every((c) => c.annotations.step2 === "checked")).toBe(true);
+  });
+
+  it("cache does not interfere with short-circuit optimization", async () => {
+    const cache = createMemoryCacheStore();
+    let thirdStageRan = false;
+    const thirdStage: CacheableStage = {
+      name: "should-not-run",
+      computeCacheKey: () => "irrelevant",
+      async process(candidates) {
+        thirdStageRan = true;
+        return candidates;
+      },
+    };
+
+    const config = makeConfig([
+      makeProducerStage(2),
+      makeFilterStage(() => false), // filter all
+      thirdStage,
+    ]);
+    const result = await executePipeline(config, [testFile], { cacheStore: cache });
+
+    expect(thirdStageRan).toBe(false);
+    expect(result.trace.stages).toHaveLength(2);
+    expect(cache.store.size).toBe(0);
+  });
+
+  it("handles empty candidates array with cacheable stage", async () => {
+    const cache = createMemoryCacheStore();
+    const cacheableAnnotator = makeCacheableAnnotator("tag", "value");
+    const config = makeConfig([makeProducerStage(0), cacheableAnnotator]);
+    const result = await executePipeline(config, [testFile], { cacheStore: cache });
+
+    // Producer creates 0 candidates, so short-circuit before cacheable stage
+    expect(result.candidates).toHaveLength(0);
+    expect(cache.store.size).toBe(0);
   });
 });

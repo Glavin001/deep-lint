@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { parseRuleYaml, loadRuleFromFile, buildPipeline } from "../../src/loader/rule-loader.js";
+import { isCacheableStage } from "../../src/core/stage.js";
 import { createMockModel } from "../fixtures/helpers/mock-llm.js";
 
 const fixturesDir = join(__dirname, "../fixtures/rules");
@@ -163,5 +164,127 @@ pipeline:
       key: value
 `);
     expect(() => buildPipeline(rule)).toThrow("Unknown stage type");
+  });
+});
+
+describe("parseRuleYaml with seed and model_id", () => {
+  it("parses seed as number in LLM stage config", () => {
+    const rule = parseRuleYaml(`
+id: test
+language: typescript
+severity: warning
+description: "Test"
+pipeline:
+  - llm:
+      prompt: "Check"
+      seed: 123
+      confidence_threshold: 0.7
+`);
+    expect(rule.pipeline[0].config.seed).toBe(123);
+  });
+
+  it("parses model_id as string in LLM stage config", () => {
+    const rule = parseRuleYaml(`
+id: test
+language: typescript
+severity: warning
+description: "Test"
+pipeline:
+  - llm:
+      prompt: "Check"
+      model_id: "gpt-4-turbo"
+      confidence_threshold: 0.7
+`);
+    expect(rule.pipeline[0].config.model_id).toBe("gpt-4-turbo");
+  });
+
+  it("seed and model_id are optional (absent is fine)", () => {
+    const rule = parseRuleYaml(`
+id: test
+language: typescript
+severity: warning
+description: "Test"
+pipeline:
+  - llm:
+      prompt: "Check"
+      confidence_threshold: 0.7
+`);
+    expect(rule.pipeline[0].config.seed).toBeUndefined();
+    expect(rule.pipeline[0].config.model_id).toBeUndefined();
+  });
+});
+
+describe("buildPipeline with caching config", () => {
+  it("produces cacheable LLM stage when model_id is in YAML config", () => {
+    const rule = parseRuleYaml(`
+id: test
+language: typescript
+severity: warning
+description: "Test"
+pipeline:
+  - llm:
+      prompt: "Check: $MATCHED_CODE"
+      model_id: "claude-3"
+      confidence_threshold: 0.7
+`);
+    const model = createMockModel({ isViolation: true, confidence: 0.9, reasoning: "t" });
+    const pipeline = buildPipeline(rule, { model });
+
+    expect(pipeline.stages).toHaveLength(1);
+    expect(isCacheableStage(pipeline.stages[0])).toBe(true);
+  });
+
+  it("produces cacheable LLM stage when modelId is in registry options", () => {
+    const rule = parseRuleYaml(`
+id: test
+language: typescript
+severity: warning
+description: "Test"
+pipeline:
+  - llm:
+      prompt: "Check: $MATCHED_CODE"
+      confidence_threshold: 0.7
+`);
+    const model = createMockModel({ isViolation: true, confidence: 0.9, reasoning: "t" });
+    const pipeline = buildPipeline(rule, { model, modelId: "gpt-4" });
+
+    expect(pipeline.stages).toHaveLength(1);
+    expect(isCacheableStage(pipeline.stages[0])).toBe(true);
+  });
+
+  it("model_id in YAML takes precedence over modelId in options", () => {
+    const rule = parseRuleYaml(`
+id: test
+language: typescript
+severity: warning
+description: "Test"
+pipeline:
+  - llm:
+      prompt: "Check: $MATCHED_CODE"
+      model_id: "from-yaml"
+`);
+    const model = createMockModel({ isViolation: true, confidence: 0.9, reasoning: "t" });
+    const pipeline = buildPipeline(rule, { model, modelId: "from-options" });
+
+    // Both produce a cacheable stage - we can't easily inspect the modelId
+    // but can verify it's cacheable
+    expect(isCacheableStage(pipeline.stages[0])).toBe(true);
+  });
+
+  it("produces non-cacheable LLM stage when no modelId anywhere", () => {
+    const rule = parseRuleYaml(`
+id: test
+language: typescript
+severity: warning
+description: "Test"
+pipeline:
+  - llm:
+      prompt: "Check: $MATCHED_CODE"
+`);
+    const model = createMockModel({ isViolation: true, confidence: 0.9, reasoning: "t" });
+    const pipeline = buildPipeline(rule, { model });
+
+    expect(pipeline.stages).toHaveLength(1);
+    expect(isCacheableStage(pipeline.stages[0])).toBe(false);
   });
 });

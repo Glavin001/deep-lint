@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { FsCacheStore } from "../../src/cache/fs-cache-store.js";
-import { rm, readdir } from "node:fs/promises";
+import { rm, readdir, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -77,5 +77,62 @@ describe("FsCacheStore", () => {
     await store.set("ab0002", { ...entry, filtered: true });
     expect((await store.get("ab0001"))?.filtered).toBe(false);
     expect((await store.get("ab0002"))?.filtered).toBe(true);
+  });
+
+  it("returns undefined for corrupted cache file (invalid JSON)", async () => {
+    // Write a valid entry first, then corrupt it
+    await store.set("corrupt01", entry);
+    // Overwrite with invalid JSON
+    const shard = join(cacheDir, "co");
+    await writeFile(join(shard, "corrupt01.json"), "{invalid json!!!", "utf-8");
+    expect(await store.get("corrupt01")).toBeUndefined();
+  });
+
+  it("returns undefined for empty cache file", async () => {
+    await store.set("empty001", entry);
+    const shard = join(cacheDir, "em");
+    await writeFile(join(shard, "empty001.json"), "", "utf-8");
+    expect(await store.get("empty001")).toBeUndefined();
+  });
+
+  it("handles concurrent writes to the same key", async () => {
+    const promises = Array.from({ length: 10 }, (_, i) =>
+      store.set("concurrent", { ...entry, cachedAt: Date.now() + i }),
+    );
+    await Promise.all(promises);
+    const result = await store.get("concurrent");
+    expect(result).toBeDefined();
+    expect(result!.annotations).toEqual(entry.annotations);
+    expect(result!.filtered).toBe(false);
+  });
+
+  it("handles concurrent writes to different keys", async () => {
+    const promises = Array.from({ length: 20 }, (_, i) =>
+      store.set(`key${String(i).padStart(4, "0")}`, { ...entry, cachedAt: Date.now() + i }),
+    );
+    await Promise.all(promises);
+
+    for (let i = 0; i < 20; i++) {
+      const result = await store.get(`key${String(i).padStart(4, "0")}`);
+      expect(result).toBeDefined();
+    }
+  });
+
+  it("stores and retrieves entry with empty annotations", async () => {
+    const emptyAnnotations: CacheEntry = {
+      annotations: {},
+      filtered: false,
+      cachedAt: Date.now(),
+    };
+    await store.set("emptyann", emptyAnnotations);
+    const result = await store.get("emptyann");
+    expect(result).toEqual(emptyAnnotations);
+    expect(result!.annotations).toEqual({});
+  });
+
+  it("clear is idempotent (safe to call when directory doesn't exist)", async () => {
+    await store.clear();
+    await store.clear(); // second clear should not throw
+    expect(await store.get("anything")).toBeUndefined();
   });
 });
