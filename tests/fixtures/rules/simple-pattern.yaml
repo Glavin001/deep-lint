@@ -1,0 +1,7 @@
+id: no-console-log
+language: typescript
+severity: warning
+description: "No console.log calls in production code"
+pipeline:
+  - ast-grep:
+      pattern: "console.log($$$ARGS)"
