@@ -10,9 +10,14 @@ pipeline:
         Analyze this async function and determine if it has proper error handling.
         Look for try/catch blocks, .catch() calls, or error callback patterns.
 
+        File: $FILE_PATH (line $START_LINE-$END_LINE, $LANGUAGE)
         Function name: $FUNC
+
         Code:
         $MATCHED_CODE
+
+        Surrounding context:
+        $SURROUNDING(5)
 
         If the function has adequate error handling, this is NOT a violation.
         If error handling is missing or insufficient, this IS a violation.

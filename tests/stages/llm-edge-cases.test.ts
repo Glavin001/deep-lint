@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { createLlmStage, interpolatePrompt } from "../../src/stages/llm.js";
+import { createLlmStage, interpolatePrompt, extractSurroundingLines, computeLlmCacheKey } from "../../src/stages/llm.js";
 import { createCandidate, type Candidate } from "../../src/core/candidate.js";
+import { isCacheableStage, type CacheableStage } from "../../src/core/stage.js";
 import type { FileContext } from "../../src/types.js";
 import {
   createMockModel,
@@ -322,6 +323,134 @@ describe("LLM stage edge cases", () => {
       expect(capturedPrompt).toContain(longCode);
       expect(capturedPrompt).toContain('"admin"');
       expect(capturedPrompt).toContain("deleteAll");
+    });
+  });
+
+  describe("$SURROUNDING(N) edge cases", () => {
+    it("handles single-line file", () => {
+      const candidate = makeCandidate({
+        fileContext: { filePath: "t.ts", content: "const x = 1;", language: "typescript" },
+        location: { filePath: "t.ts", startLine: 1, startColumn: 0, endLine: 1, endColumn: 12 },
+      });
+      expect(interpolatePrompt("$SURROUNDING(10)", candidate)).toBe("const x = 1;");
+    });
+
+    it("handles $SURROUNDING(0) returning only matched lines", () => {
+      const content = "line1\nline2\nline3\nline4\nline5";
+      const candidate = makeCandidate({
+        fileContext: { filePath: "t.ts", content, language: "typescript" },
+        location: { filePath: "t.ts", startLine: 3, startColumn: 0, endLine: 3, endColumn: 5 },
+      });
+      expect(interpolatePrompt("$SURROUNDING(0)", candidate)).toBe("line3");
+    });
+
+    it("handles multi-line match spanning 3 lines with surrounding", () => {
+      const content = "a\nb\nc\nd\ne\nf\ng\nh";
+      const candidate = makeCandidate({
+        fileContext: { filePath: "t.ts", content, language: "typescript" },
+        location: { filePath: "t.ts", startLine: 3, startColumn: 0, endLine: 5, endColumn: 1 },
+      });
+      // 1 line before line 3, lines 3-5, 1 line after line 5
+      expect(interpolatePrompt("$SURROUNDING(1)", candidate)).toBe("b\nc\nd\ne\nf");
+    });
+
+    it("handles very large N on small file", () => {
+      const content = "one\ntwo\nthree";
+      const candidate = makeCandidate({
+        fileContext: { filePath: "t.ts", content, language: "typescript" },
+        location: { filePath: "t.ts", startLine: 2, startColumn: 0, endLine: 2, endColumn: 3 },
+      });
+      expect(interpolatePrompt("$SURROUNDING(1000)", candidate)).toBe("one\ntwo\nthree");
+    });
+
+    it("handles empty file content", () => {
+      const candidate = makeCandidate({
+        fileContext: { filePath: "t.ts", content: "", language: "typescript" },
+        location: { filePath: "t.ts", startLine: 1, startColumn: 0, endLine: 1, endColumn: 0 },
+      });
+      expect(interpolatePrompt("$SURROUNDING(5)", candidate)).toBe("");
+    });
+
+    it("supports multiple $SURROUNDING(N) with different N in same prompt", () => {
+      const content = "a\nb\nc\nd\ne\nf\ng";
+      const candidate = makeCandidate({
+        fileContext: { filePath: "t.ts", content, language: "typescript" },
+        location: { filePath: "t.ts", startLine: 4, startColumn: 0, endLine: 4, endColumn: 1 },
+      });
+      const result = interpolatePrompt("narrow: $SURROUNDING(1)\nwide: $SURROUNDING(3)", candidate);
+      expect(result).toBe("narrow: c\nd\ne\nwide: a\nb\nc\nd\ne\nf\ng");
+    });
+  });
+
+  describe("new interpolation variables in realistic prompts", () => {
+    it("$FILE_CONTENT in prompt with special characters in file", () => {
+      const content = 'const regex = /\\d+/g;\nconst str = "hello $world";';
+      const candidate = makeCandidate({
+        fileContext: { filePath: "regex.ts", content, language: "typescript" },
+        matchedCode: 'const regex = /\\d+/g;',
+      });
+      const result = interpolatePrompt("Full file:\n$FILE_CONTENT", candidate);
+      expect(result).toContain(content);
+    });
+
+    it("$LANGUAGE reflects the file context language", () => {
+      const candidate = makeCandidate({
+        fileContext: { filePath: "app.tsx", content: "code", language: "tsx" },
+      });
+      expect(interpolatePrompt("$LANGUAGE", candidate)).toBe("tsx");
+    });
+
+    it("$START_LINE and $END_LINE for multi-line match", () => {
+      const candidate = makeCandidate({
+        location: { filePath: "t.ts", startLine: 10, startColumn: 0, endLine: 25, endColumn: 1 },
+      });
+      expect(interpolatePrompt("$START_LINE-$END_LINE", candidate)).toBe("10-25");
+    });
+  });
+
+  describe("caching edge cases", () => {
+    it("cache key is different when only whitespace in code differs", () => {
+      const key1 = computeLlmCacheKey("m", 42, 0.5, "function foo() {}");
+      const key2 = computeLlmCacheKey("m", 42, 0.5, "function foo()  {}");
+      expect(key1).not.toBe(key2);
+    });
+
+    it("cache key is stable across repeated computations", () => {
+      const keys = Array.from({ length: 5 }, () =>
+        computeLlmCacheKey("gpt-4", 42, 0.7, "analyze this code"),
+      );
+      expect(new Set(keys).size).toBe(1);
+    });
+
+    it("cacheable LLM stage computes different keys for different candidates", () => {
+      const model = createMockModel({ isViolation: true, confidence: 0.9, reasoning: "test" });
+      const stage = createLlmStage({ prompt: "$MATCHED_CODE", model, modelId: "gpt-4" });
+      if (!isCacheableStage(stage)) throw new Error("expected cacheable");
+
+      const c1 = makeCandidate({ matchedCode: "code A" });
+      const c2 = makeCandidate({ matchedCode: "code B" });
+      expect(stage.computeCacheKey(c1)).not.toBe(stage.computeCacheKey(c2));
+    });
+
+    it("cacheable LLM stage computes same key for identical candidates", () => {
+      const model = createMockModel({ isViolation: true, confidence: 0.9, reasoning: "test" });
+      const stage = createLlmStage({ prompt: "$MATCHED_CODE", model, modelId: "gpt-4" });
+      if (!isCacheableStage(stage)) throw new Error("expected cacheable");
+
+      const c1 = makeCandidate({ matchedCode: "same code" });
+      const c2 = makeCandidate({ matchedCode: "same code" });
+      expect(stage.computeCacheKey(c1)).toBe(stage.computeCacheKey(c2));
+    });
+
+    it("default seed of 42 is used in cache key when seed is not specified", () => {
+      const model = createMockModel({ isViolation: true, confidence: 0.9, reasoning: "test" });
+      const stageNoSeed = createLlmStage({ prompt: "test", model, modelId: "m" });
+      const stageExplicit42 = createLlmStage({ prompt: "test", model, modelId: "m", seed: 42 });
+      if (!isCacheableStage(stageNoSeed) || !isCacheableStage(stageExplicit42)) {
+        throw new Error("expected cacheable");
+      }
+      const c = makeCandidate();
+      expect(stageNoSeed.computeCacheKey(c)).toBe(stageExplicit42.computeCacheKey(c));
     });
   });
 });

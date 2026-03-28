@@ -5,6 +5,7 @@ import { createLlmStage } from "./llm.js";
 
 export interface StageRegistryOptions {
   model?: LanguageModel;
+  modelId?: string;
 }
 
 const builtinFactories: Record<string, (config: Record<string, unknown>, options: StageRegistryOptions) => Stage> = {
@@ -23,6 +24,8 @@ const builtinFactories: Record<string, (config: Record<string, unknown>, options
       prompt: config.prompt as string,
       model: options.model,
       confidenceThreshold: config.confidence_threshold as number | undefined,
+      seed: config.seed as number | undefined,
+      modelId: (config.model_id as string | undefined) ?? options.modelId,
     });
   },
 };
