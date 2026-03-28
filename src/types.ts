@@ -3,6 +3,8 @@ export type Severity = "error" | "warning" | "info";
 export type Language =
   | "typescript"
   | "javascript"
+  | "tsx"
+  | "jsx"
   | "python"
   | "go"
   | "rust"

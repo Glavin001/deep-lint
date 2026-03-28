@@ -5,7 +5,7 @@ import { createMockModel } from "../fixtures/helpers/mock-llm.js";
 
 const fixturesDir = join(__dirname, "../fixtures");
 const rulesDir = join(fixturesDir, "rules");
-const codePath = join(fixturesDir, "code");
+const codePath = join(fixturesDir, "scan-code");
 
 describe("scan", () => {
   it("finds violations with simple pattern rule (no LLM)", async () => {

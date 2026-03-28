@@ -5,9 +5,9 @@ import type { FileContext, Language } from "../types.js";
 
 const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
   ".ts": "typescript",
-  ".tsx": "typescript",
+  ".tsx": "tsx",
   ".js": "javascript",
-  ".jsx": "javascript",
+  ".jsx": "jsx",
   ".mjs": "javascript",
   ".cjs": "javascript",
   ".html": "html",
@@ -15,8 +15,10 @@ const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
 };
 
 const LANGUAGE_TO_EXTENSIONS: Record<string, string[]> = {
-  typescript: ["**/*.ts", "**/*.tsx"],
-  javascript: ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
+  typescript: ["**/*.ts"],
+  tsx: ["**/*.tsx"],
+  javascript: ["**/*.js", "**/*.mjs", "**/*.cjs"],
+  jsx: ["**/*.jsx"],
   html: ["**/*.html"],
   css: ["**/*.css"],
 };
