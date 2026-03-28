@@ -36,5 +36,6 @@ jobs:
       - name: CLI smoke test
         run: |
           # Smoke test: verify CLI runs without crashing. Exit code 1 is expected (findings exist).
-          node dist/cli.js scan --rules rules/typescript --no-llm tests/fixtures/code --format json; rc=$?
+          rc=0
+          node dist/cli.js scan --rules rules/typescript --no-llm tests/fixtures/code --format json || rc=$?
           if [ $rc -gt 1 ]; then exit $rc; fi
