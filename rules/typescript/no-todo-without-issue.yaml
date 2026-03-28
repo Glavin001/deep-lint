@@ -1,0 +1,10 @@
+id: no-todo-without-issue
+language: typescript
+severity: warning
+description: "TODO/FIXME/HACK comments must reference a tracking issue"
+pipeline:
+  - regex:
+      pattern: "(?<tag>TODO|FIXME|HACK)[:(]?\\s*(?<message>.*)"
+  - regex:
+      pattern: "(#\\d+|[A-Z]+-\\d+|https?://)"
+      invert: true

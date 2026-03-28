@@ -1,0 +1,24 @@
+id: no-tautological-comparison
+language: typescript
+severity: warning
+description: "Flag comparisons of a value with itself (likely copy-paste bug)"
+pipeline:
+  - semgrep:
+      pattern: "$X == $X"
+  - llm:
+      prompt: |
+        Semgrep found a comparison of a value with itself.
+
+        Code: $MATCHED_CODE
+
+        Is this intentional or a bug?
+
+        INTENTIONAL (NOT a violation):
+        - NaN check: value !== value (only true for NaN in JavaScript)
+        - NaN guard with loose equality: num != num
+
+        BUG (IS a violation):
+        - Copy-paste error where two different variables should be compared
+        - Tautological condition that is always true/false
+        - Filter/find callbacks comparing element to itself
+      confidence_threshold: 0.7

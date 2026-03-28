@@ -2,6 +2,10 @@ import type { Stage, StageFactory } from "../core/stage.js";
 import type { LanguageModel } from "ai";
 import { createAstGrepStage } from "./ast-grep.js";
 import { createLlmStage } from "./llm.js";
+import { createRegexStage } from "./regex.js";
+import { createEslintStage } from "./eslint.js";
+import { createSemgrepStage } from "./semgrep.js";
+import { createRuffStage } from "./ruff.js";
 
 export interface StageRegistryOptions {
   model?: LanguageModel;
@@ -25,6 +29,26 @@ const builtinFactories: Record<string, (config: Record<string, unknown>, options
       confidenceThreshold: config.confidence_threshold as number | undefined,
     });
   },
+  regex: (config) =>
+    createRegexStage({
+      pattern: config.pattern as string,
+      flags: config.flags as string | undefined,
+      invert: config.invert as boolean | undefined,
+    }),
+  eslint: (config) =>
+    createEslintStage({
+      rules: config.rules as Record<string, unknown>,
+    }),
+  semgrep: (config) =>
+    createSemgrepStage({
+      pattern: config.pattern as string | undefined,
+      language: config.language as string | undefined,
+      rule: config.rule as string | undefined,
+    }),
+  ruff: (config) =>
+    createRuffStage({
+      select: config.select as string[],
+    }),
 };
 
 export class StageRegistry {

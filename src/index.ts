@@ -14,8 +14,20 @@ export { createAstGrepStage } from "./stages/ast-grep.js";
 export type { AstGrepStageConfig } from "./stages/ast-grep.js";
 export { createLlmStage, interpolatePrompt } from "./stages/llm.js";
 export type { LlmStageConfig } from "./stages/llm.js";
+export { createRegexStage } from "./stages/regex.js";
+export type { RegexStageConfig } from "./stages/regex.js";
+export { createEslintStage } from "./stages/eslint.js";
+export type { EslintStageConfig } from "./stages/eslint.js";
+export { createSemgrepStage } from "./stages/semgrep.js";
+export type { SemgrepStageConfig } from "./stages/semgrep.js";
+export { createRuffStage } from "./stages/ruff.js";
+export type { RuffStageConfig } from "./stages/ruff.js";
 export { StageRegistry } from "./stages/index.js";
 export type { StageRegistryOptions } from "./stages/index.js";
+
+// Tool runner utilities
+export { runTool, locationsOverlap, extractMatchedCode, processToolFindings } from "./stages/tool-runner.js";
+export type { ToolFinding, ToolRunResult, RunToolOptions } from "./stages/tool-runner.js";
 
 // Loader
 export { parseRuleYaml, loadRuleFromFile, buildPipeline } from "./loader/rule-loader.js";

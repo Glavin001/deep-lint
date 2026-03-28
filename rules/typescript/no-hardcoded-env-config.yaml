@@ -1,0 +1,28 @@
+id: no-hardcoded-env-config
+language: typescript
+severity: warning
+description: "No hardcoded development/staging URLs in production code"
+pipeline:
+  - regex:
+      pattern: "https?://(localhost|127\\.0\\.0\\.1|[^\"'\\s]*\\.(dev|staging|local)\\b)[^\"'\\s]*"
+  - llm:
+      prompt: |
+        This code contains a hardcoded development/staging URL.
+
+        Matched URL: $MATCHED_CODE
+        File: $FILE_PATH
+
+        Is this URL in test code, configuration examples, or documentation (acceptable)?
+        Or is it in production code paths (violation)?
+
+        NOT a violation:
+        - URLs in test helper functions or test files
+        - URLs in comments that are documentation/examples
+        - URLs used as regex patterns
+        - Environment variable fallbacks with production defaults
+
+        IS a violation:
+        - Hardcoded localhost/staging URLs used in production API calls
+        - Development URLs assigned to module-level constants
+        - Database connection strings pointing to localhost
+      confidence_threshold: 0.7

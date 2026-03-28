@@ -1,0 +1,27 @@
+id: no-unsafe-eval
+language: typescript
+severity: error
+description: "Flag eval() with untrusted input, allow eval of trusted/static content"
+pipeline:
+  - eslint:
+      rules:
+        no-eval: error
+  - llm:
+      prompt: |
+        ESLint flagged this eval() call. Analyze whether the input is dangerous or safe.
+
+        Code:
+        $MATCHED_CODE
+        File: $FILE_PATH
+
+        DANGEROUS (IS a violation):
+        - eval of user input, URL parameters, form data
+        - eval of network response data (fetch, API calls)
+        - eval of any externally-controlled string
+
+        SAFE (NOT a violation):
+        - eval of hardcoded/constant strings
+        - eval used only in development/test mode (NODE_ENV check)
+        - JSON.parse (not eval)
+        - eval of sanitized, internally-generated code
+      confidence_threshold: 0.8
