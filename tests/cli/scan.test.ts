@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { scan } from "../../src/cli/scan.js";
+import { FsCacheStore } from "../../src/cache/fs-cache-store.js";
 import { createMockModel } from "../fixtures/helpers/mock-llm.js";
 
 const fixturesDir = join(__dirname, "../fixtures");
@@ -92,5 +96,104 @@ describe("scan", () => {
     const findings = JSON.parse(result.output);
     // Our fixture rules are all warnings, so filtering by error should find nothing
     expect(findings).toEqual([]);
+  });
+});
+
+describe("scan with caching", () => {
+  const cacheDirs: string[] = [];
+
+  function tmpCacheDir(): string {
+    const dir = join(tmpdir(), `deep-lint-scan-test-${randomBytes(4).toString("hex")}`);
+    cacheDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(async () => {
+    for (const dir of cacheDirs) {
+      await rm(dir, { recursive: true, force: true });
+    }
+    cacheDirs.length = 0;
+  });
+
+  it("accepts cacheStore option and produces same results as without cache", async () => {
+    const model = createMockModel({
+      isViolation: true,
+      confidence: 0.85,
+      reasoning: "Violation found",
+    });
+
+    const cacheStore = new FsCacheStore({ cacheDir: tmpCacheDir() });
+
+    // Without cache
+    const resultNoCache = await scan({
+      paths: [codePath],
+      rulesDir,
+      format: "json",
+      model,
+    });
+
+    // With cache
+    const resultWithCache = await scan({
+      paths: [codePath],
+      rulesDir,
+      format: "json",
+      model,
+      modelId: "test-mock",
+      cacheStore,
+    });
+
+    const findingsNoCache = JSON.parse(resultNoCache.output);
+    const findingsWithCache = JSON.parse(resultWithCache.output);
+
+    // Same number of findings
+    expect(findingsWithCache.length).toBe(findingsNoCache.length);
+  });
+
+  it("second scan with cache produces same output as first", async () => {
+    const model = createMockModel({
+      isViolation: true,
+      confidence: 0.85,
+      reasoning: "Violation found",
+    });
+
+    const cacheStore = new FsCacheStore({ cacheDir: tmpCacheDir() });
+
+    const result1 = await scan({
+      paths: [codePath],
+      rulesDir,
+      format: "json",
+      model,
+      modelId: "test-mock",
+      cacheStore,
+    });
+
+    const result2 = await scan({
+      paths: [codePath],
+      rulesDir,
+      format: "json",
+      model,
+      modelId: "test-mock",
+      cacheStore,
+    });
+
+    const findings1 = JSON.parse(result1.output);
+    const findings2 = JSON.parse(result2.output);
+    expect(findings1.length).toBe(findings2.length);
+    expect(result1.hasErrors).toBe(result2.hasErrors);
+  });
+
+  it("works without LLM stages when cache is enabled", async () => {
+    const cacheStore = new FsCacheStore({ cacheDir: tmpCacheDir() });
+
+    const result = await scan({
+      paths: [codePath],
+      rulesDir,
+      format: "json",
+      skipLlm: true,
+      cacheStore,
+    });
+
+    const findings = JSON.parse(result.output);
+    expect(findings.length).toBeGreaterThan(0);
   });
 });

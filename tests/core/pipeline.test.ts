@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { executePipeline, type PipelineConfig } from "../../src/core/pipeline.js";
 import type { Stage } from "../../src/core/stage.js";
+import type { CacheableStage } from "../../src/core/stage.js";
 import type { Candidate } from "../../src/core/candidate.js";
 import type { FileContext } from "../../src/types.js";
+import type { CacheStore, CacheEntry } from "../../src/cache/cache-store.js";
 
 const testFile: FileContext = {
   filePath: "test.ts",
@@ -161,5 +163,99 @@ describe("executePipeline", () => {
 
     expect(result.trace.totalDurationMs).toBeGreaterThanOrEqual(0);
     expect(result.trace.stages[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// In-memory cache store for testing
+function createMemoryCacheStore(): CacheStore & { store: Map<string, CacheEntry> } {
+  const store = new Map<string, CacheEntry>();
+  return {
+    store,
+    async get(key: string) { return store.get(key); },
+    async set(key: string, entry: CacheEntry) { store.set(key, entry); },
+    async clear() { store.clear(); },
+  };
+}
+
+function makeCacheableFilterStage(
+  predicate: (c: Candidate) => boolean,
+): CacheableStage {
+  return {
+    name: "cacheable-filter",
+    computeCacheKey(candidate: Candidate): string {
+      return `cache-${candidate.id}`;
+    },
+    async process(candidates) {
+      return candidates.map((c) => {
+        if (c.filtered) return c;
+        const isViolation = predicate(c);
+        return {
+          ...c,
+          annotations: { ...c.annotations, verdict: isViolation },
+          filtered: !isViolation,
+        };
+      });
+    },
+  };
+}
+
+describe("executePipeline with caching", () => {
+  it("caches stage results and serves from cache on second run", async () => {
+    const cache = createMemoryCacheStore();
+    const cacheableStage = makeCacheableFilterStage((c) => c.matchedCode === "match-0");
+
+    const config = makeConfig([makeProducerStage(3), cacheableStage]);
+
+    // First run: all misses
+    const result1 = await executePipeline(config, [testFile], { cacheStore: cache });
+    expect(result1.trace.stages[1].cacheHits).toBe(0);
+    expect(result1.trace.stages[1].cacheMisses).toBe(3);
+    expect(cache.store.size).toBe(3);
+
+    // Second run: all hits
+    const result2 = await executePipeline(config, [testFile], { cacheStore: cache });
+    expect(result2.trace.stages[1].cacheHits).toBe(3);
+    expect(result2.trace.stages[1].cacheMisses).toBe(0);
+
+    // Results should be same
+    const active1 = result1.candidates.filter((c) => !c.filtered);
+    const active2 = result2.candidates.filter((c) => !c.filtered);
+    expect(active1).toHaveLength(1);
+    expect(active2).toHaveLength(1);
+  });
+
+  it("does not add cache metrics for non-cacheable stages", async () => {
+    const cache = createMemoryCacheStore();
+    const config = makeConfig([makeProducerStage(2)]);
+    const result = await executePipeline(config, [testFile], { cacheStore: cache });
+
+    expect(result.trace.stages[0].cacheHits).toBeUndefined();
+    expect(result.trace.stages[0].cacheMisses).toBeUndefined();
+  });
+
+  it("does not use cache when no cacheStore in context", async () => {
+    const cacheableStage = makeCacheableFilterStage(() => true);
+    const config = makeConfig([makeProducerStage(2), cacheableStage]);
+    const result = await executePipeline(config, [testFile]);
+
+    // No cache metrics because caching wasn't enabled
+    expect(result.trace.stages[1].cacheHits).toBeUndefined();
+    expect(result.trace.stages[1].cacheMisses).toBeUndefined();
+  });
+
+  it("passes through already-filtered candidates without cache lookup", async () => {
+    const cache = createMemoryCacheStore();
+    const cacheableStage = makeCacheableFilterStage(() => false);
+
+    const config = makeConfig([
+      makeProducerStage(3),
+      makeFilterStage((c) => c.matchedCode === "match-0"), // filters 2 of 3
+      cacheableStage,
+    ]);
+
+    const result = await executePipeline(config, [testFile], { cacheStore: cache });
+    // Only 1 active candidate should be processed (miss), 2 filtered passed through
+    expect(result.trace.stages[2].cacheMisses).toBe(1);
+    expect(result.trace.stages[2].cacheHits).toBe(0);
   });
 });
