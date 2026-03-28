@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createLlmStage, interpolatePrompt } from "../../src/stages/llm.js";
 import { createCandidate, type Candidate } from "../../src/core/candidate.js";
 import type { FileContext } from "../../src/types.js";
-import { createMockModel, createMockModelWithError } from "../fixtures/helpers/mock-llm.js";
+import { createMockModel, createMockModelWithInvalidResponse } from "../fixtures/helpers/mock-llm.js";
 
 const fileContext: FileContext = {
   filePath: "test.ts",
@@ -136,7 +136,7 @@ describe("createLlmStage", () => {
   });
 
   it("handles malformed LLM response gracefully", async () => {
-    const model = createMockModelWithError("bad response");
+    const model = createMockModelWithInvalidResponse();
     const stage = createLlmStage({
       prompt: "Check: $MATCHED_CODE",
       model,

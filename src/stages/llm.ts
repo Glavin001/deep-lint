@@ -1,4 +1,5 @@
-import { generateText, type LanguageModel } from "ai";
+import { generateObject, type LanguageModel } from "ai";
+import { z } from "zod";
 import type { Candidate } from "../core/candidate.js";
 import type { Stage, StageContext } from "../core/stage.js";
 
@@ -8,12 +9,15 @@ export interface LlmStageConfig {
   confidenceThreshold?: number;
 }
 
-const SYSTEM_PROMPT = `You are a code review assistant. Analyze the code and determine if it violates the rule described in the prompt.
+const verdictSchema = z.object({
+  isViolation: z.boolean().describe("Whether the code violates the rule"),
+  confidence: z.number().min(0).max(1).describe("Confidence in the verdict from 0 to 1"),
+  reasoning: z.string().describe("Brief explanation of the verdict"),
+});
 
-Respond ONLY with valid JSON in this exact format:
-{"isViolation": true/false, "confidence": 0.0-1.0, "reasoning": "brief explanation"}
+type LlmVerdict = z.infer<typeof verdictSchema>;
 
-Do not include any other text before or after the JSON.`;
+const SYSTEM_PROMPT = `You are a code review assistant. Analyze the code and determine if it violates the rule described in the prompt.`;
 
 export function interpolatePrompt(
   template: string,
@@ -35,36 +39,6 @@ export function interpolatePrompt(
   return result;
 }
 
-interface LlmVerdict {
-  isViolation: boolean;
-  confidence: number;
-  reasoning: string;
-}
-
-function parseVerdict(text: string): LlmVerdict {
-  // Try to extract JSON from the response (handle markdown code blocks)
-  let jsonStr = text.trim();
-  const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (jsonMatch) {
-    jsonStr = jsonMatch[1].trim();
-  }
-
-  const parsed = JSON.parse(jsonStr);
-
-  if (typeof parsed.isViolation !== "boolean") {
-    throw new Error("Missing or invalid 'isViolation' field");
-  }
-  if (typeof parsed.confidence !== "number" || parsed.confidence < 0 || parsed.confidence > 1) {
-    throw new Error("Missing or invalid 'confidence' field (must be 0-1)");
-  }
-
-  return {
-    isViolation: parsed.isViolation,
-    confidence: parsed.confidence,
-    reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
-  };
-}
-
 export function createLlmStage(config: LlmStageConfig): Stage {
   const threshold = config.confidenceThreshold ?? 0.5;
 
@@ -83,14 +57,15 @@ export function createLlmStage(config: LlmStageConfig): Stage {
         const prompt = interpolatePrompt(config.prompt, candidate);
 
         try {
-          const response = await generateText({
+          const response = await generateObject({
             model: config.model,
             system: SYSTEM_PROMPT,
             prompt,
+            schema: verdictSchema,
             abortSignal: context.signal,
           });
 
-          const verdict = parseVerdict(response.text);
+          const verdict: LlmVerdict = response.object;
 
           const annotated: Candidate = {
             ...candidate,

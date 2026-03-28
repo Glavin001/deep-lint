@@ -13,11 +13,13 @@ function makeResponse(text: string) {
     usage: { inputTokens: 10, outputTokens: 20 },
     finishReason: "stop" as const,
     response: { id: "mock", modelId: "mock", timestamp: new Date() },
+    warnings: [] as never[],
   };
 }
 
 export function createMockModel(verdict: LlmVerdict) {
   return new MockLanguageModelV3({
+    supportsStructuredOutputs: true,
     doGenerate: async () => makeResponse(JSON.stringify(verdict)),
   });
 }
@@ -26,6 +28,7 @@ export function createMockModelFromFn(
   fn: (prompt: string) => LlmVerdict,
 ) {
   return new MockLanguageModelV3({
+    supportsStructuredOutputs: true,
     doGenerate: async ({ prompt }) => {
       // Extract the user prompt text from the prompt structure
       let promptText = "";
@@ -48,8 +51,9 @@ export function createMockModelFromFn(
   });
 }
 
-export function createMockModelWithError(errorMessage: string) {
+export function createMockModelWithInvalidResponse() {
   return new MockLanguageModelV3({
+    supportsStructuredOutputs: true,
     doGenerate: async () => makeResponse("this is not valid json"),
   });
 }
