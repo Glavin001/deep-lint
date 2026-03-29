@@ -34,7 +34,7 @@ const file: FileContext = {
  */
 
 // Use a semgrep rules config file to match all comparison operators
-const semgrepRulePath = join(__dirname, "../fixtures/rules/tautological-semgrep.yml");
+const semgrepRulePath = join(__dirname, "../fixtures/semgrep-configs/tautological-semgrep.yml");
 
 const rule = parseRuleYaml(`
 id: no-tautological-comparison
