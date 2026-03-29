@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name("deep-lint")
   .description(
-    "Composable multi-stage lint rules — from pattern matching to type checking to LLM review.",
+    "Composable multi-stage lint pipelines — chain ast-grep, regex, ESLint, Semgrep, Ruff, and LLM review in declarative YAML rules.",
   )
   .version("0.1.0");
 

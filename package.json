@@ -1,7 +1,7 @@
 {
   "name": "deep-lint",
   "version": "0.1.0",
-  "description": "Composable multi-stage lint rules — from pattern matching to type checking to LLM review.",
+  "description": "Composable multi-stage lint pipelines — chain ast-grep, regex, ESLint, Semgrep, Ruff, and LLM review in declarative YAML rules.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
