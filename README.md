@@ -16,17 +16,26 @@ deep-lint combines these approaches in multi-stage pipelines. Structural tools f
 
 ## How it works
 
-```
-Source files → [ast-grep / ESLint / Semgrep / Ruff] → [regex filter] → [LLM judgment]
-                    fast, deterministic                  lightweight       precise, semantic
-                    find all candidates                  narrow down       judge the ambiguous rest
+```mermaid
+graph LR
+    A["Source files"] --> B["ast-grep / ESLint\nSemgrep / Ruff"]
+    B --> C["regex filter"]
+    C --> D["LLM judgment"]
+
+    style B fill:#d4edda,stroke:#28a745
+    style C fill:#fff3cd,stroke:#ffc107
+    style D fill:#cce5ff,stroke:#007bff
+
+    B -.- B1["fast, deterministic\nfind all candidates"]
+    C -.- C1["lightweight\nnarrow down"]
+    D -.- D1["precise, semantic\njudge the ambiguous rest"]
 ```
 
 Each stage does what it is best at. The pipeline narrows candidates progressively, so expensive LLM analysis runs only on the few cases that cheaper stages could not resolve.
 
 ## Example: smart eval() detection
 
-Consider this file with six `eval()` calls — some dangerous, some safe:
+Consider this file with five `eval()` calls — some dangerous, some safe:
 
 ```typescript
 // DANGEROUS: eval of user-controlled input
@@ -66,7 +75,7 @@ function calculateTax(amount: number) {
 ```
 eval-usage.ts:3    error  eval can be harmful  no-eval
 eval-usage.ts:9    error  eval can be harmful  no-eval
-eval-usage.ts:15   error  eval can be harmful  no-eval
+eval-usage.ts:16   error  eval can be harmful  no-eval
 eval-usage.ts:22   error  eval can be harmful  no-eval
 eval-usage.ts:29   error  eval can be harmful  no-eval
 
