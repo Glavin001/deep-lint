@@ -1,31 +1,69 @@
 # deep-lint
 
-Composable multi-stage lint rules — from pattern matching to type checking to LLM review.
+Composable multi-stage lint pipelines — chain ast-grep, regex, ESLint, Semgrep, Ruff, and LLM review in declarative YAML rules.
 
 ## Why deep-lint?
 
-Traditional linters are single-pass: they find patterns and report. But real-world code quality problems require **combining multiple tools**. ESLint finds `eval()` but can't tell if the input is user-controlled. Semgrep finds `x == x` but can't tell if it's a NaN check. Ruff flags `pickle.load` but can't tell if the data is trusted.
+Linting tools face a fundamental tradeoff between precision and coverage:
 
-deep-lint **orchestrates** the best linting tools in multi-stage pipelines:
+**Built-in linter rules** are all-or-nothing. ESLint's `no-eval` bans every `eval()` call — even `eval("2+2")` in a build script. Ruff's S301 flags every `pickle.load()` — even from a trusted local cache. Teams disable these rules entirely, losing protection against the real bugs they were meant to catch.
+
+**Custom programmatic rules** (ESLint plugins, custom AST visitors) can encode more complex logic, but they are fundamentally limited to what syntax structure and text patterns can determine. They cannot reason about developer intent, trust boundaries, or semantic context. Checks like "is this eval input user-controlled?" or "is this self-comparison an intentional NaN check?" are impossible to express as AST visitors.
+
+**Pure LLM code review** can reason about anything, but it is expensive (processes entire files), slow, non-deterministic, and produces unfocused feedback. Asking an LLM to review every line of code is impractical at scale.
+
+deep-lint combines these approaches in multi-stage pipelines. Structural tools find candidates. The LLM judges only the ambiguous remainder — answering a specific yes/no question about a specific code snippet, not providing open-ended review.
+
+## How it works
 
 ```
-File → [ast-grep: find pattern] → [regex: filter text] → [LLM: judge intent]
+Source files → [ast-grep / ESLint / Semgrep / Ruff] → [regex filter] → [LLM judgment]
+                    fast, deterministic                  lightweight       precise, semantic
+                    find all candidates                  narrow down       judge the ambiguous rest
 ```
 
-Each stage does what it's best at. The pipeline narrows candidates progressively, so expensive analysis (LLM) only runs on the few ambiguous cases.
+Each stage does what it is best at. The pipeline narrows candidates progressively, so expensive LLM analysis runs only on the few cases that cheaper stages could not resolve.
 
-## Features
+## Example: smart eval() detection
 
-- **Multi-stage pipelines**: Chain structural matching, regex, tool integrations, and LLM review
-- **ast-grep integration**: Fast, precise structural code matching via `@ast-grep/napi`
-- **Regex stage**: Lightweight text pattern matching with capture groups
-- **ESLint integration**: Leverage ESLint's mature JS/TS analysis as a pipeline stage
-- **Semgrep integration**: Use Semgrep's powerful multi-language SAST patterns
-- **Ruff integration**: Tap into Ruff's blazing-fast Python linting
-- **LLM-powered review**: Use any LLM provider via Vercel AI SDK (OpenAI, Anthropic, Ollama, etc.)
-- **YAML rule definitions**: Declarative, composable rule configs
-- **CLI + programmatic API**: Use from the command line or embed in your tools
-- **TypeScript-first**: Full type safety and IntelliSense
+**Traditional approach** — ESLint flags all `eval()` calls:
+
+```
+src/app.ts:12   error  eval can be harmful  no-eval
+src/app.ts:47   error  eval can be harmful  no-eval
+src/app.ts:88   error  eval can be harmful  no-eval
+
+✖ 3 problems (3 errors)
+```
+
+All three flagged. Line 47 is `eval("2+2")` in a build helper. Line 88 is behind a `NODE_ENV` check. The team disables `no-eval`. Now line 12, which evaluates user input, goes undetected.
+
+**deep-lint approach** — ESLint finds them, LLM judges each one:
+
+```yaml
+id: no-unsafe-eval
+language: typescript
+severity: error
+description: "Flag eval() with untrusted input, allow eval of trusted/static content"
+pipeline:
+  - eslint:
+      rules:
+        no-eval: error
+  - llm:
+      prompt: |
+        ESLint flagged this eval() call. Is the input user-controlled
+        (dangerous) or trusted/static (safe)?
+        Code: $MATCHED_CODE
+      confidence_threshold: 0.8
+```
+
+```
+src/app.ts:12   error  eval() with user-controlled input  no-unsafe-eval
+
+✖ 1 problem (1 error)
+```
+
+One finding — the actually dangerous one. The safe cases are filtered out by the LLM stage.
 
 ## Quick Start
 
@@ -33,28 +71,43 @@ Each stage does what it's best at. The pipeline narrows candidates progressively
 npm install deep-lint
 ```
 
-### CLI Usage
-
 ```bash
-# Run all rules (structural only, no LLM)
+# Structural stages only (no LLM, no API key needed)
 npx deep-lint scan --rules ./rules --no-llm ./src
 
-# Run with LLM stages (requires model configuration)
+# Full pipeline including LLM stages
 npx deep-lint scan --rules ./rules ./src
 
-# JSON output
-npx deep-lint scan --rules ./rules --no-llm --format json ./src
+# JSON output for CI integration
+npx deep-lint scan --rules ./rules --format json ./src
 
 # Filter by severity
 npx deep-lint scan --rules ./rules --severity error ./src
+
+# Enable caching for LLM results
+npx deep-lint scan --rules ./rules --cache ./src
 ```
 
-### Writing Rules
+To use LLM stages, configure a provider via the [Vercel AI SDK](https://sdk.vercel.ai/):
 
-Rules are YAML files with a pipeline of stages:
+```typescript
+import { buildPipeline } from "deep-lint";
+import { anthropic } from "@ai-sdk/anthropic";
+
+const pipeline = buildPipeline(rule, {
+  model: anthropic("claude-sonnet-4-20250514"),
+});
+```
+
+Any Vercel AI SDK compatible provider works: OpenAI, Anthropic, Google, Ollama, etc.
+
+## Writing Rules
+
+Rules are YAML files with a pipeline of stages. Three examples, escalating in complexity:
+
+### Single stage — ast-grep pattern matching
 
 ```yaml
-# rules/no-console-log.yaml
 id: no-console-log
 language: typescript
 severity: warning
@@ -64,27 +117,91 @@ pipeline:
       pattern: "console.log($$$ARGS)"
 ```
 
-Multi-stage rule with LLM review:
+### Two stages — regex composition (no LLM needed)
+
+ESLint's `no-warning-comments` bans all TODOs. This rule only flags TODOs missing an issue reference:
 
 ```yaml
-# rules/ensure-error-handling.yaml
-id: ensure-error-handling
+id: no-todo-without-issue
 language: typescript
 severity: warning
-description: "Async functions should have error handling"
+description: "TODO/FIXME/HACK comments must reference a tracking issue"
 pipeline:
-  - ast-grep:
-      pattern: "async function $FUNC($$$PARAMS) { $$$BODY }"
-  - llm:
-      prompt: |
-        Does this async function have proper error handling?
-        Function: $FUNC
-        Code:
-        $MATCHED_CODE
-      confidence_threshold: 0.7
+  - regex:
+      pattern: "(?<tag>TODO|FIXME|HACK)[:(]?\\s*(?<message>.*)"
+  - regex:
+      pattern: "(#\\d+|[A-Z]+-\\d+|https?://)"
+      invert: true    # Filter OUT matches that have issue refs — keep only untracked TODOs
 ```
 
-### Programmatic API
+Stage 1 finds all TODO/FIXME/HACK comments. Stage 2 (inverted) filters out those that already reference an issue (`#1234`, `JIRA-567`, or a URL). Only untracked TODOs remain as violations.
+
+### Three stages — structural matching + text filtering + LLM judgment
+
+```yaml
+id: no-unhandled-promise
+language: typescript
+severity: error
+description: "Promise-returning calls must be awaited, caught, or explicitly voided"
+pipeline:
+  - ast-grep:
+      pattern: "$FUNC($$$ARGS)"
+  - regex:
+      pattern: "(await |return |void |\\.then|\\.catch)"
+      invert: true
+  - llm:
+      prompt: |
+        This function call may return a Promise that is not awaited or caught.
+        Code: $MATCHED_CODE
+        Function: $FUNC
+        Is the missing await intentional (fire-and-forget for analytics/logging)?
+      confidence_threshold: 0.8
+```
+
+Stage 1 (ast-grep) finds all function calls. Stage 2 (regex, inverted) filters out calls that are already awaited, returned, voided, or chained with `.then`/`.catch`. Stage 3 (LLM) evaluates the remaining candidates — distinguishing intentional fire-and-forget from actual bugs. Each stage narrows the set, so the LLM only processes the few truly ambiguous cases.
+
+## Stages
+
+| Stage | Description | Use case |
+|-------|-------------|----------|
+| `ast-grep` | Structural AST matching via `@ast-grep/napi` | Find code by structure: function calls, assignments, patterns |
+| `regex` | Text pattern matching with capture groups and `invert` mode | Find text patterns, filter by content, extract named groups |
+| `eslint` | ESLint rule integration for JS/TS | Leverage ESLint's existing rule ecosystem |
+| `semgrep` | Semgrep pattern matching (multi-language) | Cross-language SAST patterns, taint tracking |
+| `ruff` | Ruff integration for Python | Fast Python security and style analysis |
+| `llm` | LLM-based semantic analysis via Vercel AI SDK | Judge intent, evaluate context, reduce false positives |
+
+## LLM Prompt Variables
+
+LLM prompts support interpolation of candidate data:
+
+| Variable | Description |
+|----------|-------------|
+| `$MATCHED_CODE` | The code snippet matched by previous stages |
+| `$FILE_PATH` | Path to the source file |
+| `$FILE_CONTENT` | Full file content |
+| `$SURROUNDING(N)` | N lines of context around the match |
+| `$START_LINE`, `$END_LINE` | Line numbers of the match |
+| `$LANGUAGE` | Target language of the rule |
+| `$VAR` | Any metavariable captured by ast-grep, regex, or semgrep (e.g., `$FUNC`, `$ARGS`) |
+
+## Built-in Rules
+
+deep-lint ships with tested rules in the `rules/` directory:
+
+| Rule | Pipeline | Language | Description |
+|------|----------|----------|-------------|
+| `no-console-log` | ast-grep | TypeScript | Avoid console.log in production code |
+| `no-any-cast` | ast-grep | TypeScript | Avoid `as any` type casts |
+| `no-todo-without-issue` | regex → regex | TypeScript | TODOs must reference a tracking issue |
+| `no-hardcoded-env-config` | regex → llm | TypeScript | No hardcoded dev/staging URLs in production code |
+| `no-unsafe-eval` | eslint → llm | TypeScript | Flag eval() with untrusted input |
+| `no-unhandled-promise` | ast-grep → regex → llm | TypeScript | Promises must be awaited or caught |
+| `ensure-error-handling` | ast-grep → llm | TypeScript | Async functions should have error handling |
+| `no-tautological-comparison` | semgrep → llm | TypeScript | Flag self-comparisons (likely copy-paste bugs) |
+| `no-unsafe-pickle` | ruff → llm | Python | Flag pickle deserialization of untrusted data |
+
+## Programmatic API
 
 ```typescript
 import {
@@ -116,189 +233,13 @@ const findings = result.candidates.filter((c) => !c.filtered);
 console.log(`Found ${findings.length} violations`);
 ```
 
-### Using with an LLM
+## How Pipelines Work
 
-```typescript
-import { buildPipeline } from "deep-lint";
-import { anthropic } from "@ai-sdk/anthropic";
-
-const pipeline = buildPipeline(rule, {
-  model: anthropic("claude-sonnet-4-20250514"),
-});
-```
-
-Any Vercel AI SDK compatible provider works: OpenAI, Anthropic, Google, Ollama, etc.
-
-## Stages
-
-| Stage | Description | Use case |
-|-------|-------------|----------|
-| `ast-grep` | Structural code matching using ast-grep patterns | Find code by AST structure (functions, calls, patterns) |
-| `regex` | Regular expression matching with capture groups | Find text patterns, filter by content, extract data |
-| `eslint` | ESLint integration for JS/TS analysis | Leverage ESLint's mature rule ecosystem |
-| `semgrep` | Semgrep integration for multi-language SAST | Security patterns, taint tracking, cross-function analysis |
-| `ruff` | Ruff integration for Python linting | Fast Python analysis (replaces Pylint/Flake8) |
-| `llm` | LLM-based semantic code review | Judge intent, evaluate context, reduce false positives |
-
-### Stage Configuration
-
-**ast-grep** — structural code matching:
-```yaml
-- ast-grep:
-    pattern: "console.log($$$ARGS)"    # ast-grep pattern syntax
-    language: typescript                 # optional, defaults to rule language
-```
-
-**regex** — text pattern matching:
-```yaml
-- regex:
-    pattern: "TODO|FIXME|HACK"          # regex pattern
-    flags: "i"                           # optional: regex flags
-    invert: false                        # optional: invert match (filter OUT matches)
-```
-
-**eslint** — JavaScript/TypeScript linting:
-```yaml
-- eslint:
-    rules:
-      no-eval: error
-      complexity: [error, 10]
-```
-
-**semgrep** — multi-language SAST:
-```yaml
-- semgrep:
-    pattern: "$X == $X"                 # inline pattern
-    language: typescript                 # language for pattern mode
-    # OR:
-    rule: "path/to/semgrep-rule.yaml"   # external rule file
-```
-
-**ruff** — Python linting:
-```yaml
-- ruff:
-    select:
-      - "S301"                           # suspicious-pickle-usage
-      - "S608"                           # hardcoded-sql-expression
-```
-
-**llm** — semantic analysis:
-```yaml
-- llm:
-    prompt: |
-      Is this code safe? $MATCHED_CODE
-      Variable: $VAR
-    confidence_threshold: 0.7
-```
-
-## Pipeline Model
-
-1. The first stage (typically `ast-grep`, `regex`, or a tool integration) **produces** candidates from source files
+1. The first stage (typically ast-grep, regex, or a tool integration) **produces** candidates from source files
 2. Subsequent stages **filter** and **annotate** candidates
-3. Candidates marked `filtered: true` are excluded from results but preserved in traces
-4. The pipeline short-circuits when all candidates are filtered
-5. Each stage narrows the candidate set — expensive stages (LLM) run last on fewer candidates
-
-## Real-World Examples
-
-### TODO tracking without blanket bans (regex + regex)
-
-ESLint's `no-warning-comments` bans all TODOs. Deep-lint only flags TODOs missing an issue reference:
-
-```yaml
-id: no-todo-without-issue
-language: typescript
-severity: warning
-description: "TODO/FIXME/HACK comments must reference a tracking issue"
-pipeline:
-  - regex:
-      pattern: "(?<tag>TODO|FIXME|HACK)[:(]?\\s*(?<message>.*)"
-  - regex:
-      pattern: "(#\\d+|[A-Z]+-\\d+|https?://)"
-      invert: true    # Filter OUT matches — keep only TODOs WITHOUT issue refs
-```
-
-### Smart eval() detection (ESLint + LLM)
-
-ESLint's `no-eval` bans all `eval()`. Deep-lint lets ESLint find them, then LLM judges if the input is actually dangerous:
-
-```yaml
-id: no-unsafe-eval
-language: typescript
-severity: error
-description: "Flag eval() with untrusted input, allow eval of trusted/static content"
-pipeline:
-  - eslint:
-      rules:
-        no-eval: error
-  - llm:
-      prompt: |
-        ESLint flagged this eval(). Is the input user-controlled (dangerous)
-        or trusted/static (safe)?
-        Code: $MATCHED_CODE
-      confidence_threshold: 0.8
-```
-
-### Tautological comparison detection (Semgrep + LLM)
-
-Semgrep finds `x == x` patterns, but `value !== value` is an intentional NaN check in JavaScript. LLM tells them apart:
-
-```yaml
-id: no-tautological-comparison
-language: typescript
-severity: warning
-description: "Flag comparisons of a value with itself (likely copy-paste bug)"
-pipeline:
-  - semgrep:
-      pattern: "$X == $X"
-  - llm:
-      prompt: |
-        Is this self-comparison intentional (NaN check) or a bug?
-        Code: $MATCHED_CODE
-      confidence_threshold: 0.7
-```
-
-### Unsafe pickle detection (Ruff + LLM)
-
-Ruff's S301 flags all `pickle.load()`. Deep-lint uses Ruff's speed, then LLM evaluates data source trust:
-
-```yaml
-id: no-unsafe-pickle
-language: python
-severity: error
-description: "Flag pickle deserialization of untrusted data"
-pipeline:
-  - ruff:
-      select: ["S301"]
-  - llm:
-      prompt: |
-        Is the data source trusted (cache, test fixture) or untrusted (user upload, network)?
-        Code: $MATCHED_CODE
-      confidence_threshold: 0.8
-```
-
-### 3-stage floating promise detection (ast-grep + regex + LLM)
-
-The showcase pipeline — three tools, each doing what it's best at:
-
-```yaml
-id: no-unhandled-promise
-language: typescript
-severity: error
-description: "Promise-returning calls must be awaited, caught, or explicitly voided"
-pipeline:
-  - ast-grep:
-      pattern: "$FUNC($$$ARGS)"           # Stage 1: find all function calls
-  - regex:
-      pattern: "(await |return |void |\\.then|\\.catch)"
-      invert: true                          # Stage 2: filter out already-handled calls
-  - llm:
-      prompt: |
-        Is the missing await intentional (fire-and-forget logging)
-        or a bug (data lost)?
-        Code: $MATCHED_CODE
-      confidence_threshold: 0.8             # Stage 3: judge the remaining cases
-```
+3. Candidates marked `filtered: true` are excluded from results but preserved in execution traces
+4. The pipeline **short-circuits** when all candidates are filtered — remaining stages are skipped
+5. Each stage narrows the candidate set, so expensive stages (LLM) run last on fewer candidates
 
 ## Supported Languages
 
@@ -308,7 +249,7 @@ TypeScript, JavaScript, TSX, JSX, Python, Go, Rust, Java, C, C++, HTML, CSS
 
 ```bash
 npm install
-npm test          # Run all tests
+npm test          # Run tests
 npm run build     # Build with tsup
 npm run lint      # Type-check
 ```
