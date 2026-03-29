@@ -26,17 +26,54 @@ Each stage does what it is best at. The pipeline narrows candidates progressivel
 
 ## Example: smart eval() detection
 
-**Traditional approach** — ESLint flags all `eval()` calls:
+Consider this file with six `eval()` calls — some dangerous, some safe:
+
+```typescript
+// DANGEROUS: eval of user-controlled input
+function executeUserCode(userInput: string) {
+  return eval(userInput);
+}
+
+// DANGEROUS: eval of data from network request
+async function processRemoteScript(url: string) {
+  const script = await (await fetch(url)).text();
+  return eval(script);
+}
+
+// SAFE: eval of sanitized, internally-generated code
+function createAccessor(fieldName: string) {
+  const sanitized = fieldName.replace(/[^a-zA-Z0-9_]/g, "");
+  const code = `(function(obj) { return obj.${sanitized}; })`;
+  return eval(code);
+}
+
+// SAFE: eval guarded by NODE_ENV check
+function devConsole(expression: string) {
+  if (process.env.NODE_ENV !== "production") {
+    return eval(expression);
+  }
+}
+
+// SAFE: eval of hardcoded math expression
+function calculateTax(amount: number) {
+  const formula = "amount * 0.15";
+  return eval(formula);
+}
+```
+
+**Traditional approach** — ESLint's `no-eval` flags every call:
 
 ```
-src/app.ts:12   error  eval can be harmful  no-eval
-src/app.ts:47   error  eval can be harmful  no-eval
-src/app.ts:88   error  eval can be harmful  no-eval
+eval-usage.ts:3    error  eval can be harmful  no-eval
+eval-usage.ts:9    error  eval can be harmful  no-eval
+eval-usage.ts:15   error  eval can be harmful  no-eval
+eval-usage.ts:22   error  eval can be harmful  no-eval
+eval-usage.ts:29   error  eval can be harmful  no-eval
 
-✖ 3 problems (3 errors)
+✖ 5 problems (5 errors)
 ```
 
-All three flagged. Line 47 is `eval("2+2")` in a build helper. Line 88 is behind a `NODE_ENV` check. The team disables `no-eval`. Now line 12, which evaluates user input, goes undetected.
+Five findings, all identical messages. A custom ESLint rule could try to filter some — but it cannot determine whether `userInput` comes from a user or whether `code` was safely constructed. That requires semantic understanding of the data flow and trust boundary, which is beyond what AST analysis can express. The team disables `no-eval`. Now the dangerous calls go undetected.
 
 **deep-lint approach** — ESLint finds them, LLM judges each one:
 
@@ -58,12 +95,13 @@ pipeline:
 ```
 
 ```
-src/app.ts:12   error  eval() with user-controlled input  no-unsafe-eval
+eval-usage.ts:3    error  eval() with user-controlled input        no-unsafe-eval
+eval-usage.ts:9    error  eval() with data from network request    no-unsafe-eval
 
-✖ 1 problem (1 error)
+✖ 2 problems (2 errors)
 ```
 
-One finding — the actually dangerous one. The safe cases are filtered out by the LLM stage.
+The ESLint stage finds all five `eval()` calls (fast, deterministic). The LLM stage evaluates each one and filters out the three safe cases — sanitized input, dev-only guard, hardcoded constant. Only the genuinely dangerous calls remain. This two-stage pipeline is [integration tested](tests/integration/unsafe-eval.test.ts) against realistic code.
 
 ## Quick Start
 
