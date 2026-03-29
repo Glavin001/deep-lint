@@ -14,6 +14,12 @@ const VALID_LANGUAGES = new Set<string>([
   "jsx",
   "html",
   "css",
+  "python",
+  "go",
+  "rust",
+  "java",
+  "c",
+  "cpp",
 ]);
 
 export function parseRuleYaml(content: string): RuleDefinition {

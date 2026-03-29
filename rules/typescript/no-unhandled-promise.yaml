@@ -1,0 +1,30 @@
+id: no-unhandled-promise
+language: typescript
+severity: error
+description: "Promise-returning calls must be awaited, caught, or explicitly voided"
+pipeline:
+  - ast-grep:
+      pattern: "$FUNC($$$ARGS)"
+  - regex:
+      pattern: "(await |return |void |Promise\\.|\\. ?then|\\. ?catch|\\.finally)"
+      invert: true
+  - llm:
+      prompt: |
+        This function call may return a Promise that is not awaited or caught.
+
+        Code: $MATCHED_CODE
+        Function: $FUNC
+
+        Is the missing await/catch intentional or a bug?
+
+        INTENTIONAL (NOT a violation):
+        - Fire-and-forget for logging, analytics, or telemetry
+        - Non-async function that doesn't return a Promise
+        - Result assigned to a variable for later use
+        - Cleanup operations where failure is acceptable
+
+        BUG (IS a violation):
+        - Async data fetching without await (data lost)
+        - Error-producing operations without error handling
+        - Operations where the caller expects the result
+      confidence_threshold: 0.8
