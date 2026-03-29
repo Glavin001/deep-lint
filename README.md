@@ -279,6 +279,41 @@ console.log(`Found ${findings.length} violations`);
 4. The pipeline **short-circuits** when all candidates are filtered — remaining stages are skipped
 5. Each stage narrows the candidate set, so expensive stages (LLM) run last on fewer candidates
 
+## Caching
+
+LLM calls are the most expensive part of a pipeline — both in latency and cost. deep-lint includes a filesystem-based cache that stores LLM verdicts per candidate, so repeated scans skip LLM calls for code that hasn't changed.
+
+```bash
+# Enable caching (results stored in .deep-lint/cache by default)
+npx deep-lint scan --rules ./rules --cache ./src
+
+# Custom cache directory
+npx deep-lint scan --rules ./rules --cache --cache-dir .cache ./src
+
+# Clear cache
+npx deep-lint scan --clear-cache
+```
+
+How it works:
+- Each LLM verdict is cached with a key derived from the model, prompt template, confidence threshold, and the interpolated code snippet
+- Cache entries are sharded on disk (like git objects) with atomic writes for concurrent safety
+- TTL-based expiration (7 days by default) ensures stale results are refreshed
+- Pipeline traces report `cacheHits` and `cacheMisses` per stage, so you can see the savings
+
+On a second scan of unchanged code, LLM stages complete instantly from cache — reducing a multi-second pipeline to milliseconds.
+
+```typescript
+import { FsCacheStore } from "deep-lint";
+
+const cacheStore = new FsCacheStore({
+  cacheDir: ".deep-lint/cache",
+  ttlMs: 7 * 24 * 60 * 60 * 1000, // 7 days
+});
+
+const result = await executePipeline(pipeline, files, { cacheStore });
+// result.trace.stages[1].cacheHits → number of cached LLM verdicts reused
+```
+
 ## Supported Languages
 
 TypeScript, JavaScript, TSX, JSX, Python, Go, Rust, Java, C, C++, HTML, CSS
