@@ -21,6 +21,12 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
+      - name: Install Ruff
+        run: pipx install ruff
+
+      - name: Install Semgrep
+        run: pipx install semgrep
+
       - name: Install dependencies
         run: npm ci
 

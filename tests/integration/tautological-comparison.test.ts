@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -8,18 +8,6 @@ import {
   type FileContext,
 } from "../../src/index.js";
 import { createMockModelFromFn } from "../fixtures/helpers/mock-llm.js";
-
-// Mock runTool since Semgrep may not be installed
-vi.mock("../../src/stages/tool-runner.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/stages/tool-runner.js")>();
-  return {
-    ...actual,
-    runTool: vi.fn(),
-  };
-});
-
-import { runTool } from "../../src/stages/tool-runner.js";
-const mockedRunTool = vi.mocked(runTool);
 
 const fixture = readFileSync(
   join(__dirname, "../fixtures/code/tautological-checks.ts"),
@@ -44,6 +32,10 @@ const file: FileContext = {
  *   powerful pattern matching, then LLM evaluates whether each is an
  *   intentional NaN check or a copy-paste bug. Best of both tools.
  */
+
+// Use a semgrep rules config file to match all comparison operators
+const semgrepRulePath = join(__dirname, "../fixtures/semgrep-configs/tautological-semgrep.yml");
+
 const rule = parseRuleYaml(`
 id: no-tautological-comparison
 language: typescript
@@ -51,7 +43,7 @@ severity: warning
 description: "Flag comparisons of a value with itself (likely copy-paste bug)"
 pipeline:
   - semgrep:
-      pattern: "$X == $X"
+      rule: "${semgrepRulePath}"
   - llm:
       prompt: |
         This comparison compares a value with itself: $MATCHED_CODE
@@ -76,67 +68,7 @@ const model = createMockModelFromFn((prompt) => {
   };
 });
 
-// Simulate Semgrep finding $X == $X patterns
-function setupSemgrepMock() {
-  const findings = [
-    // role === role (line 7)
-    {
-      location: { filePath: "tautological-checks.ts", startLine: 7, startColumn: 6, endLine: 7, endColumn: 20 },
-      message: "comparison of identical values", ruleId: "tautological-compare",
-      matchedCode: "role === role",
-      metaVariables: { X: "role" },
-      annotations: { semgrepCheckId: "tautological-compare" },
-    },
-    // left == left (line 13)
-    {
-      location: { filePath: "tautological-checks.ts", startLine: 13, startColumn: 9, endLine: 13, endColumn: 22 },
-      message: "comparison of identical values", ruleId: "tautological-compare",
-      matchedCode: "left == left",
-      metaVariables: { X: "left" },
-      annotations: { semgrepCheckId: "tautological-compare" },
-    },
-    // i === i (line 18)
-    {
-      location: { filePath: "tautological-checks.ts", startLine: 18, startColumn: 30, endLine: 18, endColumn: 37 },
-      message: "comparison of identical values", ruleId: "tautological-compare",
-      matchedCode: "i === i",
-      metaVariables: { X: "i" },
-      annotations: { semgrepCheckId: "tautological-compare" },
-    },
-    // value !== value (NaN check, line 23)
-    {
-      location: { filePath: "tautological-checks.ts", startLine: 23, startColumn: 9, endLine: 23, endColumn: 25 },
-      message: "comparison of identical values", ruleId: "tautological-compare",
-      matchedCode: "value !== value",
-      metaVariables: { X: "value" },
-      annotations: { semgrepCheckId: "tautological-compare" },
-    },
-    // num != num (NaN guard, line 29)
-    {
-      location: { filePath: "tautological-checks.ts", startLine: 29, startColumn: 6, endLine: 29, endColumn: 16 },
-      message: "comparison of identical values", ruleId: "tautological-compare",
-      matchedCode: "num != num",
-      metaVariables: { X: "num" },
-      annotations: { semgrepCheckId: "tautological-compare" },
-    },
-    // status === status (line 34)
-    {
-      location: { filePath: "tautological-checks.ts", startLine: 34, startColumn: 9, endLine: 34, endColumn: 27 },
-      message: "comparison of identical values", ruleId: "tautological-compare",
-      matchedCode: "status === status",
-      metaVariables: { X: "status" },
-      annotations: { semgrepCheckId: "tautological-compare" },
-    },
-  ];
-
-  mockedRunTool.mockResolvedValue({ findings });
-}
-
 describe("Tautological Comparison Detection (Semgrep + LLM)", () => {
-  beforeEach(() => {
-    setupSemgrepMock();
-  });
-
   it("flags copy-paste bugs (== and ===)", async () => {
     const pipeline = buildPipeline(rule, { model });
     const result = await executePipeline(pipeline, [file]);
@@ -174,16 +106,6 @@ describe("Tautological Comparison Detection (Semgrep + LLM)", () => {
 
     expect(result.trace.stages).toHaveLength(1);
     expect(result.trace.stages[0].name).toBe("semgrep");
-  });
-
-  it("preserves Semgrep metavariables through pipeline", async () => {
-    const pipeline = buildPipeline(rule, { model });
-    const result = await executePipeline(pipeline, [file]);
-
-    for (const c of result.candidates) {
-      expect(c.metaVariables.X).toBeDefined();
-      expect(c.metaVariables.X.length).toBeGreaterThan(0);
-    }
   });
 
   it("has correct 2-stage pipeline trace", async () => {

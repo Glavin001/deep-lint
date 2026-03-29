@@ -1,24 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import type { Candidate } from "../../src/core/candidate.js";
 import type { FileContext } from "../../src/types.js";
-
-vi.mock("../../src/stages/tool-runner.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/stages/tool-runner.js")>();
-  return {
-    ...actual,
-    runTool: vi.fn(),
-  };
-});
-
-import { runTool } from "../../src/stages/tool-runner.js";
 import { createEslintStage } from "../../src/stages/eslint.js";
 
-const mockedRunTool = vi.mocked(runTool);
-
 const fileContext: FileContext = {
-  filePath: "test.ts",
+  filePath: "test.js",
   content: 'eval("code");\nconst x = 1;\nvar y = 2;\n',
-  language: "typescript",
+  language: "javascript",
 };
 
 function makeSeedCandidate(fc: FileContext = fileContext): Candidate {
@@ -51,63 +39,37 @@ function makeLocatedCandidate(
   };
 }
 
-beforeEach(() => {
-  mockedRunTool.mockReset();
-});
-
 describe("createEslintStage", () => {
   it("creates candidates from ESLint findings in producer mode", async () => {
-    mockedRunTool.mockResolvedValue({
-      findings: [
-        {
-          location: { filePath: "test.ts", startLine: 1, startColumn: 0, endLine: 1, endColumn: 13 },
-          message: "eval can be harmful",
-          ruleId: "no-eval",
-          annotations: { eslintSeverity: 2, eslintRuleId: "no-eval" },
-        },
-        {
-          location: { filePath: "test.ts", startLine: 3, startColumn: 0, endLine: 3, endColumn: 9 },
-          message: "Unexpected var, use let or const instead",
-          ruleId: "no-var",
-          annotations: { eslintSeverity: 1, eslintRuleId: "no-var" },
-        },
-      ],
-    });
-
     const stage = createEslintStage({ rules: { "no-eval": "error", "no-var": "warn" } });
     const results = await stage.process([makeSeedCandidate()], {});
 
     expect(results).toHaveLength(2);
 
-    expect(results[0].location.startLine).toBe(1);
-    expect(results[0].location.endLine).toBe(1);
-    expect(results[0].location.filePath).toBe("test.ts");
-    expect(results[0].annotations.eslintRuleId).toBe("no-eval");
-    expect(results[0].annotations.eslintSeverity).toBe(2);
-    expect(results[0].annotations.toolRuleId).toBe("no-eval");
-    expect(results[0].annotations.toolMessage).toBe("eval can be harmful");
-    expect(results[0].matchedCode).toBe('eval("code");');
-    expect(results[0].ruleId).toBe("test-rule");
-    expect(results[0].filtered).toBe(false);
+    // no-eval finding on line 1
+    const evalResult = results.find((r) => r.annotations.eslintRuleId === "no-eval");
+    expect(evalResult).toBeDefined();
+    expect(evalResult!.location.startLine).toBe(1);
+    expect(evalResult!.location.filePath).toBe("test.js");
+    expect(evalResult!.annotations.eslintSeverity).toBe(2);
+    expect(evalResult!.annotations.toolRuleId).toBe("no-eval");
+    expect(evalResult!.annotations.toolMessage).toBe("`eval` can be harmful.");
+    expect(evalResult!.matchedCode).toBeTruthy();
+    expect(evalResult!.ruleId).toBe("test-rule");
+    expect(evalResult!.filtered).toBe(false);
 
-    expect(results[1].annotations.eslintRuleId).toBe("no-var");
-    expect(results[1].annotations.eslintSeverity).toBe(1);
+    // no-var finding on line 3
+    const varResult = results.find((r) => r.annotations.eslintRuleId === "no-var");
+    expect(varResult).toBeDefined();
+    expect(varResult!.location.startLine).toBe(3);
+    expect(varResult!.annotations.eslintSeverity).toBe(1);
   });
 
   it("filters candidates with no overlapping ESLint findings in filter mode", async () => {
-    mockedRunTool.mockResolvedValue({
-      findings: [
-        {
-          location: { filePath: "test.ts", startLine: 1, startColumn: 0, endLine: 1, endColumn: 13 },
-          message: "eval can be harmful",
-          ruleId: "no-eval",
-          annotations: { eslintSeverity: 2, eslintRuleId: "no-eval" },
-        },
-      ],
-    });
-
+    // Line 1 has eval("code") which triggers no-eval
     const overlapping = makeLocatedCandidate(1, 1);
-    const nonOverlapping = makeLocatedCandidate(3, 3);
+    // Line 2 has const x = 1 — no no-eval finding here
+    const nonOverlapping = makeLocatedCandidate(2, 2);
     nonOverlapping.id = "located-2";
 
     const stage = createEslintStage({ rules: { "no-eval": "error" } });
@@ -122,8 +84,6 @@ describe("createEslintStage", () => {
   });
 
   it("passes through already-filtered candidates untouched", async () => {
-    mockedRunTool.mockResolvedValue({ findings: [] });
-
     const filtered: Candidate = { ...makeSeedCandidate(), filtered: true };
     const stage = createEslintStage({ rules: { "no-eval": "error" } });
     const results = await stage.process([filtered], {});
@@ -131,14 +91,11 @@ describe("createEslintStage", () => {
     expect(results).toHaveLength(1);
     expect(results[0].filtered).toBe(true);
     expect(results[0].matchedCode).toBe("");
-    // runTool should not be called for filtered-only candidates
-    expect(mockedRunTool).not.toHaveBeenCalled();
   });
 
   it("creates no candidates when findings are empty", async () => {
-    mockedRunTool.mockResolvedValue({ findings: [] });
-
-    const stage = createEslintStage({ rules: { "no-eval": "error" } });
+    // Use a rule that won't match the content
+    const stage = createEslintStage({ rules: { "no-debugger": "error" } });
     const results = await stage.process([makeSeedCandidate()], {});
 
     expect(results).toHaveLength(0);

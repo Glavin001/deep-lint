@@ -58,7 +58,7 @@ function parseSemgrepOutput(stdout: string, filePath: string): ToolFinding[] {
       },
       message: r.extra.message ?? r.check_id,
       ruleId: r.check_id,
-      matchedCode: r.extra.lines,
+      matchedCode: r.extra.lines === "requires login" ? undefined : r.extra.lines,
       metaVariables,
       annotations: {
         semgrepCheckId: r.check_id,
