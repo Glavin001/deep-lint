@@ -1,0 +1,10 @@
+rules:
+  - id: tautological-compare
+    pattern-either:
+      - pattern: $X == $X
+      - pattern: $X === $X
+      - pattern: $X != $X
+      - pattern: $X !== $X
+    languages: [typescript, javascript]
+    message: comparison of identical values
+    severity: WARNING

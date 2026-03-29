@@ -54,6 +54,7 @@ export async function runTool(
       const { stdout } = await execFileAsync(options.command, args, {
         timeout: 30_000,
         maxBuffer: 10 * 1024 * 1024,
+        cwd: tempDir,
       });
       return { findings: options.parseOutput(stdout, filePath) };
     } catch (err: unknown) {
