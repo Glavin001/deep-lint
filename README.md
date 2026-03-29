@@ -38,36 +38,36 @@ Each stage does what it is best at. The pipeline narrows candidates progressivel
 Consider this file with five `eval()` calls — some dangerous, some safe:
 
 ```typescript
-// DANGEROUS: eval of user-controlled input
-function executeUserCode(userInput: string) {
-  return eval(userInput);
-}
-
-// DANGEROUS: eval of data from network request
-async function processRemoteScript(url: string) {
-  const script = await (await fetch(url)).text();
-  return eval(script);
-}
-
-// SAFE: eval of sanitized, internally-generated code
-function createAccessor(fieldName: string) {
-  const sanitized = fieldName.replace(/[^a-zA-Z0-9_]/g, "");
-  const code = `(function(obj) { return obj.${sanitized}; })`;
-  return eval(code);
-}
-
-// SAFE: eval guarded by NODE_ENV check
-function devConsole(expression: string) {
-  if (process.env.NODE_ENV !== "production") {
-    return eval(expression);
-  }
-}
-
-// SAFE: eval of hardcoded math expression
-function calculateTax(amount: number) {
-  const formula = "amount * 0.15";
-  return eval(formula);
-}
+ 1 | // DANGEROUS: eval of user-controlled input
+ 2 | function executeUserCode(userInput: string) {
+ 3 |   return eval(userInput);
+ 4 | }
+ 5 |
+ 6 | // DANGEROUS: eval of data from network request
+ 7 | async function processRemoteScript(url: string) {
+ 8 |   const script = await (await fetch(url)).text();
+ 9 |   return eval(script);
+10 | }
+11 |
+12 | // SAFE: eval of sanitized, internally-generated code
+13 | function createAccessor(fieldName: string) {
+14 |   const sanitized = fieldName.replace(/[^a-zA-Z0-9_]/g, "");
+15 |   const code = `(function(obj) { return obj.${sanitized}; })`;
+16 |   return eval(code);
+17 | }
+18 |
+19 | // SAFE: eval guarded by NODE_ENV check
+20 | function devConsole(expression: string) {
+21 |   if (process.env.NODE_ENV !== "production") {
+22 |     return eval(expression);
+23 |   }
+24 | }
+25 |
+26 | // SAFE: eval of hardcoded math expression
+27 | function calculateTax(amount: number) {
+28 |   const formula = "amount * 0.15";
+29 |   return eval(formula);
+30 | }
 ```
 
 **Traditional approach** — ESLint's `no-eval` flags every call:
